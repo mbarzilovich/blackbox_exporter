@@ -33,7 +33,6 @@ const floatRegexp = "(-?[0-9]+([.][0-9]+)?)"
 func matchRegularExpressions(reader io.Reader, config HTTPProbe) (bool, map[string]float64) {
 	var extracted = make(map[string]float64)
 	body, err := ioutil.ReadAll(reader)
-	log.Infoln("Body", string(body))
 	if err != nil {
 		log.Errorf("Error reading HTTP body: %s", err)
 		return false, nil
@@ -72,7 +71,6 @@ func matchRegularExpressions(reader io.Reader, config HTTPProbe) (bool, map[stri
 		}
 		if matcher := re.FindSubmatch(body); matcher != nil {
 			isdig, _ := regexp.Compile(floatRegexp)
-			log.Infoln("Using matcher #1", string(matcher[1]))
 			if isdig.Match(matcher[1]) {
 				extracted[expression.Name], _ = strconv.ParseFloat(string(matcher[1]), 64)
 			} else {
@@ -145,12 +143,6 @@ func probeHTTP(target string, w http.ResponseWriter, module Module, registry *pr
 		})
 		registry.MustRegister(metric)
 		customMetrics[customMetric.Name] = &metric
-	}
-	for _, customMetric := range config.ExtractRegexpToMetric {
-		//if customMetric.FailOnErr != false && customMetric.FailOnErr != true {
-		//	customMetric.FailOnErr = true
-		log.Infof("metric Name = %s , Fail on error = %s", customMetric.Name, customMetric.FailOnErr)
-		//}
 	}
 
 	if module.HTTP.Protocol == "" {
@@ -274,7 +266,6 @@ func probeHTTP(target string, w http.ResponseWriter, module Module, registry *pr
 				metric := *customMetrics[name]
 				metric.Set(float64(value))
 			}
-			log.Infoln("Some custom values set ", extractedValues)
 		}
 	}
 
