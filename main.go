@@ -62,10 +62,18 @@ type HTTPProbe struct {
 	Headers                map[string]string `yaml:"headers"`
 	FailIfMatchesRegexp    []string          `yaml:"fail_if_matches_regexp"`
 	FailIfNotMatchesRegexp []string          `yaml:"fail_if_not_matches_regexp"`
+	ExtractRegexpToMetric  []MetricExtractor `yaml:"extract_regexp_to_metric"`
 	TLSConfig              config.TLSConfig  `yaml:"tls_config"`
 	Protocol               string            `yaml:"protocol"`              // Defaults to "tcp".
 	PreferredIPProtocol    string            `yaml:"preferred_ip_protocol"` // Defaults to "ip6".
 	Body                   string            `yaml:"body"`
+}
+
+type MetricExtractor struct {
+	Name      string `yaml:"name"`
+	Help      string `yaml:"help"`
+	Regexp    string `yaml:"regexp"`
+	FailOnErr bool   `yaml:"fail_on_error"`
 }
 
 type QueryResponse struct {

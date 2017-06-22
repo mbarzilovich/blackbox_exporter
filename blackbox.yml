@@ -3,6 +3,13 @@ modules:
     prober: http
     timeout: 5s
     http:
+      method: GET
+      preferred_ip_protocol: "ip4"
+      extract_regexp_to_metric:
+      - name: 'mymetric'
+        help: 'My extracted metric'
+        regexp: 'id":"([0-9]+(?:\.[0-9]+)?)'
+        fail_on_error: true
   http_post_2xx:
     prober: http
     timeout: 5s

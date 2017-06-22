@@ -25,40 +25,72 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/log"
+	"strconv"
 )
 
-func matchRegularExpressions(reader io.Reader, config HTTPProbe) bool {
+const floatRegexp = "(-?[0-9]+([.][0-9]+)?)"
+
+func matchRegularExpressions(reader io.Reader, config HTTPProbe) (bool, map[string]float64) {
+	var extracted = make(map[string]float64)
 	body, err := ioutil.ReadAll(reader)
+	log.Infoln("Body", string(body))
 	if err != nil {
 		log.Errorf("Error reading HTTP body: %s", err)
-		return false
+		return false, nil
 	}
 	for _, expression := range config.FailIfMatchesRegexp {
 		re, err := regexp.Compile(expression)
 		if err != nil {
 			log.Errorf("Could not compile expression %q as regular expression: %s", expression, err)
-			return false
+			return false, nil
 		}
 		if re.Match(body) {
-			return false
+			return false, nil
 		}
 	}
 	for _, expression := range config.FailIfNotMatchesRegexp {
 		re, err := regexp.Compile(expression)
 		if err != nil {
 			log.Errorf("Could not compile expression %q as regular expression: %s", expression, err)
-			return false
+			return false, nil
 		}
 		if !re.Match(body) {
-			return false
+			return false, nil
 		}
 	}
-	return true
+
+	for _, expression := range config.ExtractRegexpToMetric {
+		exprString := strings.Replace(expression.Regexp, "$D", floatRegexp, 1)
+		re, err := regexp.Compile(exprString)
+		if err != nil {
+			log.Errorf("Could not compile expression %q as regular expression: %s", expression, err)
+			return false, nil
+		}
+		if !re.Match(body) && expression.FailOnErr {
+			log.Warnf("Failed to match regexp and Fail on error set to true")
+			return false, extracted
+		}
+		if matcher := re.FindSubmatch(body); matcher != nil {
+			isdig, _ := regexp.Compile(floatRegexp)
+			log.Infoln("Using matcher #1", string(matcher[1]))
+			if isdig.Match(matcher[1]) {
+				extracted[expression.Name], _ = strconv.ParseFloat(string(matcher[1]), 64)
+			} else {
+				log.Warnln("Failed to extract nummerical value from first match group of regexp", exprString)
+				if expression.FailOnErr {
+					return false, extracted
+				}
+			}
+		}
+	}
+	return true, extracted
 }
 
 func probeHTTP(target string, w http.ResponseWriter, module Module, registry *prometheus.Registry) (success bool) {
 	var redirects int
 	var dialProtocol, fallbackProtocol string
+	var customMetrics = make(map[string]*prometheus.Gauge)
+	var extractedValues = make(map[string]float64)
 
 	var (
 		contentLengthGauge = prometheus.NewGauge(prometheus.GaugeOpts{
@@ -99,6 +131,27 @@ func probeHTTP(target string, w http.ResponseWriter, module Module, registry *pr
 	registry.MustRegister(probeIPProtocolGauge)
 
 	config := module.HTTP
+
+	for _, customMetric := range config.ExtractRegexpToMetric {
+		var help string
+		if customMetric.Help != "" {
+			help = customMetric.Help
+		} else {
+			help = "Custom Gauge"
+		}
+		var metric = prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: customMetric.Name,
+			Help: help,
+		})
+		registry.MustRegister(metric)
+		customMetrics[customMetric.Name] = &metric
+	}
+	for _, customMetric := range config.ExtractRegexpToMetric {
+		//if customMetric.FailOnErr != false && customMetric.FailOnErr != true {
+		//	customMetric.FailOnErr = true
+		log.Infof("metric Name = %s , Fail on error = %s", customMetric.Name, customMetric.FailOnErr)
+		//}
+	}
 
 	if module.HTTP.Protocol == "" {
 		module.HTTP.Protocol = "tcp"
@@ -215,9 +268,13 @@ func probeHTTP(target string, w http.ResponseWriter, module Module, registry *pr
 		} else if 200 <= resp.StatusCode && resp.StatusCode < 300 {
 			success = true
 		}
-
-		if success && (len(config.FailIfMatchesRegexp) > 0 || len(config.FailIfNotMatchesRegexp) > 0) {
-			success = matchRegularExpressions(resp.Body, config)
+		if success && (len(config.FailIfMatchesRegexp) > 0 || len(config.FailIfNotMatchesRegexp) > 0 || len(config.ExtractRegexpToMetric) > 0) {
+			success, extractedValues = matchRegularExpressions(resp.Body, config)
+			for name, value := range extractedValues {
+				metric := *customMetrics[name]
+				metric.Set(float64(value))
+			}
+			log.Infoln("Some custom values set ", extractedValues)
 		}
 	}
 

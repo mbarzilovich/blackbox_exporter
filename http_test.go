@@ -23,6 +23,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/config"
+	"reflect"
 )
 
 func TestHTTPStatusCodes(t *testing.T) {
@@ -368,4 +369,88 @@ func TestTLSConfigIsIgnoredForPlainHTTP(t *testing.T) {
 		"probe_http_ssl": 0,
 	}
 	checkRegistryResults(expectedResults, mfs, t)
+}
+
+func TestExtractRegexpToMetricHTTP(t *testing.T) {
+	var tests = []struct {
+		Expression    string
+		Body          string
+		FailOnError   bool
+		ShouldSucceed bool
+	}{
+		{Expression: "id=\"$D\"", Body: "Body text: <a href=\"localhost:8989\" id=\"1234.5\">text</a>", FailOnError: true, ShouldSucceed: true},
+		{Expression: "id:\"$D\"", Body: "Body text: <a href=\"localhost:8989\" id=\"1234.5\">text</a>", FailOnError: true, ShouldSucceed: false},
+		{Expression: "id:\"$D\"", Body: "Body text: <a href=\"localhost:8989\" id=\"1234.5\">text</a>", FailOnError: false, ShouldSucceed: true},
+		{Expression: "localhost:(/d{4})", Body: "Body text: <a href=\"localhost:8989\" id=\"1234.5\">text</a>", FailOnError: false, ShouldSucceed: true},
+		{Expression: "localhost:(/d{5})", Body: "Body text: <a href=\"localhost:8989\" id=\"1234.5\">text</a>", FailOnError: true, ShouldSucceed: false},
+		{Expression: "localhost:(/d{5})", Body: "Body text: <a href=\"localhost:8989\" id=\"1234.5\">text</a>", FailOnError: false, ShouldSucceed: true},
+		{Expression: "Value=$D", Body: "Value=-123.34", FailOnError: true, ShouldSucceed: true},
+	}
+
+	for i, test := range tests {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintf(w, test.Body)
+		}))
+		defer ts.Close()
+
+		recorder := httptest.NewRecorder()
+		registry := prometheus.NewRegistry()
+		result := probeHTTP(ts.URL, recorder,
+			Module{Timeout: time.Second, HTTP: HTTPProbe{
+				ExtractRegexpToMetric: []MetricExtractor{
+					{Name: "testmetric", Regexp: test.Expression, FailOnErr: test.FailOnError},
+				}}}, registry)
+
+		body := recorder.Body.String()
+		if result != test.ShouldSucceed {
+			t.Fatalf("Test %d had unexpected result: Body: %s Regexp: %s", i, body, test.Expression)
+		}
+		err := registry.Register(
+			prometheus.NewGauge(
+				prometheus.GaugeOpts{Name: "testmetric", Help: "Custom Gauge"},
+			))
+		if _, ok := err.(prometheus.AlreadyRegisteredError); !ok {
+			t.Fatalf("Metric is not created properly. Error should be AlreadyRegisteredError but got %s", reflect.TypeOf(err))
+		}
+	}
+}
+
+func TestExtractRegexpToMetricDefaultValueHTTP(t *testing.T) {
+	var tests = []struct {
+		Expression    string
+		Body          string
+		ShouldSucceed bool
+	}{
+		{Expression: "id=\"$D\"", Body: "Body text: <a href=\"localhost:8989\" id=\"1234.5\">text</a>", ShouldSucceed: true},
+		{Expression: "id:\"$D\"", Body: "Body text: <a href=\"localhost:8989\" id=\"1234.5\">text</a>", ShouldSucceed: true},
+		{Expression: "localhost:(/d{4})", Body: "Body text: <a href=\"localhost:8989\" id=\"1234.5\">text</a>", ShouldSucceed: true},
+		{Expression: "localhost:(/d{5})", Body: "Body text: <a href=\"localhost:8989\" id=\"1234.5\">text</a>", ShouldSucceed: true},
+	}
+
+	for i, test := range tests {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintf(w, test.Body)
+		}))
+		defer ts.Close()
+
+		recorder := httptest.NewRecorder()
+		registry := prometheus.NewRegistry()
+		result := probeHTTP(ts.URL, recorder,
+			Module{Timeout: time.Second, HTTP: HTTPProbe{
+				ExtractRegexpToMetric: []MetricExtractor{
+					{Name: "testmetric", Regexp: test.Expression},
+				}}}, registry)
+
+		body := recorder.Body.String()
+		if result != test.ShouldSucceed {
+			t.Fatalf("Test %d had unexpected result: Body: %s Regexp: %s", i, body, test.Expression)
+		}
+		err := registry.Register(
+			prometheus.NewGauge(
+				prometheus.GaugeOpts{Name: "testmetric", Help: "Custom Gauge"},
+			))
+		if _, ok := err.(prometheus.AlreadyRegisteredError); !ok {
+			t.Fatalf("Metric is not created properly. Error should be AlreadyRegisteredError but got %s", reflect.TypeOf(err))
+		}
+	}
 }

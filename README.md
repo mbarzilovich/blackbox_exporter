@@ -43,6 +43,15 @@ modules:
         - "Could not connect to database"
       fail_if_not_matches_regexp:
         - "Download the latest version here"
+      extract_regexp_to_metric:
+        - name: my_metric
+          help: 'My extracted metric' # Default "Custom metric"
+          regexp: "id=(\d+)" # Regexp must contain matching group
+          fail_on_error: true #default false
+        - name: newmetric
+          help: 'New extracted gauge metric'
+          regexp: 'number:$D' # $D is alias for regexp "(-?[0-9]+([.][0-9]+)?)"
+          fail_on_error: false #default false
       tls_config:
         insecure_skip_verify: false
       protocol: "tcp" # accepts "tcp/tcp4/tcp6", defaults to "tcp"
